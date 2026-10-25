@@ -514,6 +514,11 @@ namespace {
             auto* director = CCDirector::get();
             double interval = director->getAnimationInterval() * 1000.0;
             double frame = director->getDeltaTime() * 1000.0;
+            // v2.77: at most about one frame per click (never under 4 ms, so long cube jumps
+            // still get searched): 4.2 ms at 240 fps, 7 ms at 144, the setting at 60
+            if (interval > 0.0) {
+                budget = std::min(budget, std::max(4.0, interval));
+            }
             if (interval > 0.0 && frame > std::max(interval * 2.0, 20.0)) {
                 budget = std::min(budget, 4.0);
             }
@@ -2296,28 +2301,46 @@ namespace {
     }
 
     // end of an attempt: keep it if it's the longest run from the start so far
+    // v2.77: the best run is kept in memory and only written when you leave or finish the
+    // level; writing it on every new-best death made a hitch right when you died.
+    BenchRun benchBest;
+    size_t benchBestTicks = 0;   // longest run known for this level (memory or file)
+    bool benchBestDirty = false;
+
     void benchFinish() {
         if (!benchRecording) {
             return;
         }
         benchRecording = false;
-        if (benchLive.track.size() < 240 || benchLive.track.size() <= benchSavedTicks()) {
+        if (benchLive.track.size() < 240 || benchLive.track.size() <= benchBestTicks) {
             return;
         }
+        benchBestTicks = benchLive.track.size();
+        benchBest = std::move(benchLive);
+        benchLive = {};
+        benchBestDirty = true;
+    }
+
+    void benchFlush() {
+        if (!benchBestDirty || memoryKey.empty()) {
+            return;
+        }
+        benchBestDirty = false;
         std::error_code ec;
         std::filesystem::create_directories(benchFile().parent_path(), ec);
         std::ofstream out(benchFile(), std::ios::trunc);
-        out << benchLive.startX << ' ' << benchLive.startY << ' ' << benchLive.dt << ' ' << benchLive.track.size() << ' '
-            << benchLive.inputs.size() << '\n';
-        for (auto const& [t, d] : benchLive.inputs) {
+        out << benchBest.startX << ' ' << benchBest.startY << ' ' << benchBest.dt << ' ' << benchBest.track.size() << ' '
+            << benchBest.inputs.size() << '\n';
+        for (auto const& [t, d] : benchBest.inputs) {
             out << t << ' ' << (d ? 1 : 0) << '\n';
         }
-        for (auto const& p : benchLive.track) {
+        for (auto const& p : benchBest.track) {
             out << p.x << ' ' << p.y << '\n';
         }
     }
 
     void benchCheck(PlayLayer* layer, PlayerObject* p1) {
+        benchFlush();
         BenchRun r;
         if (!benchLoad(r)) {
             say("run check: no recorded run for this level yet (play one attempt from the start first)");
@@ -3626,6 +3649,7 @@ class $modify(BufEndLevelLayer, EndLevelLayer) {
             this->addChild(stats, 100);
         }
         benchFinish();  // a completed run is the best recording there is
+        benchFlush();
         endAttempt();
     }
 };
@@ -3678,7 +3702,7 @@ $on_mod(Loaded) {
     if (Loader::get()->isModLoaded("square3ang.cbfextrapolate")) {
         say("CBF Extrapolate detected: visual only, predictions unaffected");
     }
-    say("v2.76 loaded. F6 cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
+    say("v2.77 loaded. F6 cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
 }
 
 class $modify(BufPlayLayer, PlayLayer) {
@@ -3747,6 +3771,9 @@ class $modify(BufPlayLayer, PlayLayer) {
         attemptStats = {};
         benchNeedStart = true;
         benchRecording = false;
+        benchBest = {};
+        benchBestDirty = false;
+        benchBestTicks = benchSavedTicks();
         loadProfile();
         if (buf.saveDing) {
             FMODAudioEngine::sharedEngine()->preloadEffect("counter003.ogg");  // v2.58: no hitch on the first ding
@@ -3884,6 +3911,7 @@ class $modify(BufPlayLayer, PlayLayer) {
 
     void onQuit() {
         benchFinish();
+        benchFlush();
         benchRecording = false;
         saveMemory();
         // v2.58: changes made in the settings popup during the level are kept for this level;
