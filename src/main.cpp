@@ -3624,36 +3624,6 @@ public:
     }
 };
 
-// v2.46: the level complete screen says so if the buffer was on during the attempt.
-class $modify(BufEndLevelLayer, EndLevelLayer) {
-    void customSetup() {
-        EndLevelLayer::customSetup();
-        if (!buf.usedThisAttempt) {
-            return;
-        }
-        auto win = CCDirector::get()->getWinSize();
-        auto* label = CCLabelBMFont::create("Click Before Frames was on", "bigFont.fnt");
-        label->setScale(0.35f);
-        label->setColor({ 150, 205, 255 });
-        label->setOpacity(170);
-        label->setAnchorPoint({ 1.f, 1.f });
-        label->setPosition({ win.width - 6.f, win.height - 4.f });
-        this->addChild(label, 100);
-        if (attemptStats.saves > 0) {
-            auto* stats = CCLabelBMFont::create(attemptSummary().c_str(), "bigFont.fnt");
-            stats->setScale(0.28f);
-            stats->setColor({ 255, 190, 225 });
-            stats->setOpacity(170);
-            stats->setAnchorPoint({ 1.f, 1.f });
-            stats->setPosition({ win.width - 6.f, win.height - 16.f });
-            this->addChild(stats, 100);
-        }
-        benchFinish();  // a completed run is the best recording there is
-        benchFlush();
-        endAttempt();
-    }
-};
-
 class $modify(BufPauseLayer, PauseLayer) {
     void customSetup() {
         PauseLayer::customSetup();
